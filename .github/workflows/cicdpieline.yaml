@@ -193,7 +193,7 @@ jobs:
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
           subject: "[SUCCESS] Flask CI/CD Deployment - ${{ github.sha }}"
-          to: ${{ secrets.MAIL_TO }}
+          to: ${{ secrets.NOTIFICATION_EMAIL }}
           from: ${{ secrets.SMTP_USERNAME }}
           body: |
             CI/CD Deployment Successful
@@ -237,7 +237,7 @@ jobs:
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
           subject: "[FAILURE] Flask CI/CD Pipeline - ${{ github.sha }}"
-          to: ${{ secrets.MAIL_TO }}
+          to: ${{ secrets.NOTIFICATION_EMAIL }}
           from: ${{ secrets.SMTP_USERNAME }}
           body: |
             CI/CD Pipeline Failed
