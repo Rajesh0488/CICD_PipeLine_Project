@@ -16,8 +16,8 @@ jobs:
   build-test-deploy:
 
     runs-on: ubuntu-latest
-    
-    environment: Configure AWS key
+
+    environment: AWS key
 
     steps:
 
