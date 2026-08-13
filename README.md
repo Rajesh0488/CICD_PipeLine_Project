@@ -125,3 +125,14 @@ Configure the following GitHub Actions secrets:
 <img width="940" height="534" alt="image" src="https://github.com/user-attachments/assets/7624b79c-6a04-4114-a647-3f75865721cc" />
 
 
+## Cleanup AWS Configuration
+
+<img width="940" height="229" alt="image" src="https://github.com/user-attachments/assets/3c4082ca-2a55-4c1b-9e54-e822f274b31b" />
+
+<img width="940" height="404" alt="image" src="https://github.com/user-attachments/assets/5fcf43f1-49bc-4c4a-b527-805e91cfff52" />
+
+<img width="940" height="287" alt="image" src="https://github.com/user-attachments/assets/af6fc74f-033d-4697-8ec7-7dd64fccb99b" />
+
+<img width="940" height="212" alt="image" src="https://github.com/user-attachments/assets/bf4f1239-e9e4-447b-8d57-092da7feb831" />
+
+
