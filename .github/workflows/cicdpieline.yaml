@@ -106,80 +106,68 @@ jobs:
       # 10. DEPLOY TO EC2
       # ------------------------------------------------
       - name: Deploy to EC2
-        shell: bash
-
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-
-          AWS_REGION: ${{ env.AWS_REGION }}
-          ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}
-          CONTAINER_NAME: ${{ env.CONTAINER_NAME }}
-          APP_PORT: ${{ env.APP_PORT }}
-          ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
-
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          set -e
 
           echo "STAGE=Deploy" >> "$GITHUB_ENV"
 
-          echo "Preparing SSH..."
+          mkdir -p ~/.ssh
 
-          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/ec2_key
 
-          # Validate EC2 secrets
-          if [ -z "$EC2_HOST" ]; then
-            echo "ERROR: EC2_HOST is empty"
-            exit 1
-          fi
+          chmod 600 ~/.ssh/ec2_key
 
-          if [ -z "$EC2_USER" ]; then
-            echo "ERROR: EC2_USER is empty"
-            exit 1
-          fi
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
 
-          if [ -z "$EC2_SSH_KEY" ]; then
-            echo "ERROR: EC2_SSH_KEY is empty"
-            exit 1
-          fi
+          ssh -i ~/.ssh/ec2_key \
+            "$EC2_USER@$EC2_HOST" << EOF
 
-          echo "EC2_HOST is configured"
-          echo "EC2_USER is configured"
-          echo "EC2_SSH_KEY is configured"
+            set -e
 
-          # Create SSH private key
-          printf '%s\n' "$EC2_SSH_KEY" > "$HOME/.ssh/ec2_key"
-          chmod 600 "$HOME/.ssh/ec2_key"
+            echo "Logging into ECR..."
 
-          # Check SSH key
-          if ! ssh-keygen -y -f "$HOME/.ssh/ec2_key" > /dev/null 2>&1; then
-            echo "ERROR: EC2_SSH_KEY is not a valid private key"
-            exit 1
-          fi
+            aws ecr get-login-password \
+              --region $AWS_REGION | \
+              docker login \
+              --username AWS \
+              --password-stdin $REGISTRY
 
-          echo "SSH private key is valid"
+            echo "Pulling new Docker image..."
 
-          echo "Testing EC2 host..."
+            docker pull \
+              $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-          # Add EC2 host to known_hosts
-          echo "Adding EC2 host to known_hosts..."
+            echo "Stopping old container..."
 
-          ssh-keyscan -H "$EC2_HOST" >> "$HOME/.ssh/known_hosts"
+            docker stop $CONTAINER_NAME || true
 
-          chmod 644 "$HOME/.ssh/known_hosts"
+            echo "Removing old container..."
 
-          echo "Connecting to EC2..."
+            docker rm $CONTAINER_NAME || true
 
-          ssh \
-            -i "$HOME/.ssh/ec2_key" \
-            -o StrictHostKeyChecking=yes \
-            -o ConnectTimeout=30 \
-            "$EC2_USER@$EC2_HOST" \
-            "echo 'SSH connection successful'"
+            echo "Starting new container..."
 
-          echo "EC2 SSH connection successful"
+            docker run -d \
+              --name $CONTAINER_NAME \
+              -p $APP_PORT:$APP_PORT \
+              $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+            echo "Waiting for application..."
+
+            sleep 10
+
+            echo "Running health check..."
+
+            curl --fail \
+              http://localhost:$APP_PORT/health
+
+            echo "Deployment successful!"
+
+          EOF
 
       # ------------------------------------------------
       # 11. SUCCESS EMAIL
