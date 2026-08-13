@@ -1,0 +1,247 @@
+name: Flask CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: flask-cicd-app
+  CONTAINER_NAME: flask-app
+  APP_PORT: 5000
+
+jobs:
+
+  build-test-deploy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ------------------------------------------------
+      # 1. CHECKOUT
+      # ------------------------------------------------
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------
+      # 2. SETUP PYTHON
+      # ------------------------------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ------------------------------------------------
+      # 3. INSTALL DEPENDENCIES
+      # ------------------------------------------------
+      - name: Install dependencies
+        run: |
+          echo "STAGE=Install Dependencies" >> $GITHUB_ENV
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ------------------------------------------------
+      # 4. TEST
+      # ------------------------------------------------
+      - name: Run pytest
+        run: |
+          echo "STAGE=Test" >> $GITHUB_ENV
+          pytest -v
+
+      # ------------------------------------------------
+      # 5. CONFIGURE AWS
+      # ------------------------------------------------
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ------------------------------------------------
+      # 6. LOGIN TO ECR
+      # ------------------------------------------------
+      - name: Login to Amazon ECR
+        id: login-ecr
+        run: |
+          echo "STAGE=Push" >> $GITHUB_ENV
+          aws ecr get-login-password --region $AWS_REGION | \
+          docker login --username AWS --password-stdin \
+          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com
+
+      # ------------------------------------------------
+      # 7. CREATE IMAGE TAG
+      # ------------------------------------------------
+      - name: Set image tag
+        run: |
+          echo "STAGE=Build" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_ENV
+          echo "ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> $GITHUB_ENV
+
+      # ------------------------------------------------
+      # 8. BUILD DOCKER IMAGE
+      # ------------------------------------------------
+      - name: Build Docker image
+        run: |
+          echo "STAGE=Build" >> $GITHUB_ENV
+
+          docker build \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+
+      # ------------------------------------------------
+      # 9. PUSH IMAGE TO ECR
+      # ------------------------------------------------
+      - name: Push Docker image to ECR
+        run: |
+          echo "STAGE=Push" >> $GITHUB_ENV
+
+          docker push \
+            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      # ------------------------------------------------
+      # 10. DEPLOY TO EC2
+      # ------------------------------------------------
+      - name: Deploy to EC2
+        run: |
+          echo "STAGE=Deploy" >> $GITHUB_ENV
+
+          mkdir -p ~/.ssh
+
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/ec2_key \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << EOF
+
+            set -e
+
+            echo "Logging into Amazon ECR..."
+
+            aws ecr get-login-password \
+              --region $AWS_REGION | \
+              docker login \
+              --username AWS \
+              --password-stdin \
+              $ECR_REGISTRY
+
+            echo "Pulling new Docker image..."
+
+            docker pull \
+              $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+            echo "Stopping old container..."
+
+            docker stop $CONTAINER_NAME || true
+
+            echo "Removing old container..."
+
+            docker rm $CONTAINER_NAME || true
+
+            echo "Starting new container..."
+
+            docker run -d \
+              --name $CONTAINER_NAME \
+              -p $APP_PORT:$APP_PORT \
+              $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+            echo "Waiting for application..."
+
+            sleep 10
+
+            echo "Checking container status..."
+
+            docker ps
+
+            echo "Testing health endpoint..."
+
+            curl --fail \
+              http://localhost:$APP_PORT/health
+
+            echo "Deployment successful."
+
+          EOF
+
+      # ------------------------------------------------
+      # 11. SUCCESS EMAIL
+      # ------------------------------------------------
+      - name: Send success email
+        if: success()
+        uses: dawidd6/action-send-mail@v6
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "[SUCCESS] Flask CI/CD Deployment - ${{ github.sha }}"
+          to: ${{ secrets.MAIL_TO }}
+          from: ${{ secrets.SMTP_USERNAME }}
+          body: |
+            CI/CD Deployment Successful
+
+            Application:
+            Flask CI/CD Application
+
+            Status:
+            SUCCESS
+
+            Branch:
+            ${{ github.ref_name }}
+
+            Commit SHA:
+            ${{ github.sha }}
+
+            Docker Image:
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+
+            EC2 Target:
+            ${{ secrets.EC2_HOST }}
+
+            Deployment:
+            The new Docker image was pulled and started successfully.
+
+            Health Check:
+            /health returned HTTP 200.
+
+            Pipeline Run:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      # ------------------------------------------------
+      # 12. FAILURE EMAIL
+      # ------------------------------------------------
+      - name: Send failure email
+        if: failure()
+        uses: dawidd6/action-send-mail@v6
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "[FAILURE] Flask CI/CD Pipeline - ${{ github.sha }}"
+          to: ${{ secrets.MAIL_TO }}
+          from: ${{ secrets.SMTP_USERNAME }}
+          body: |
+            CI/CD Pipeline Failed
+
+            Application:
+            Flask CI/CD Application
+
+            Status:
+            FAILURE
+
+            Failed Stage:
+            ${{ env.STAGE }}
+
+            Branch:
+            ${{ github.ref_name }}
+
+            Commit SHA:
+            ${{ github.sha }}
+
+            Pipeline Run:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Please open the pipeline run above to investigate the failure.
