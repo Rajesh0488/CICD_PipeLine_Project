@@ -19,6 +19,11 @@ jobs:
 
     environment: AWS key
 
+    environment: EC2host
+
+    environment: SMTP
+
+
     steps:
 
       # ------------------------------------------------
