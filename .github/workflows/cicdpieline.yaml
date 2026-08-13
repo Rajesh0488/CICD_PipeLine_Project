@@ -107,6 +107,7 @@ jobs:
       # ------------------------------------------------
       - name: Deploy to EC2
         shell: bash
+
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
@@ -116,7 +117,6 @@ jobs:
           ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}
           CONTAINER_NAME: ${{ env.CONTAINER_NAME }}
           APP_PORT: ${{ env.APP_PORT }}
-
           ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
 
@@ -127,28 +127,59 @@ jobs:
 
           echo "Preparing SSH..."
 
-          mkdir -p ~/.ssh
+          mkdir -p "$HOME/.ssh"
 
-          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/ec2_key
-          chmod 600 ~/.ssh/ec2_key
-
-          echo "Testing EC2 host..."
-
+          # Validate EC2 secrets
           if [ -z "$EC2_HOST" ]; then
             echo "ERROR: EC2_HOST is empty"
             exit 1
           fi
 
+          if [ -z "$EC2_USER" ]; then
+            echo "ERROR: EC2_USER is empty"
+            exit 1
+          fi
+
+          if [ -z "$EC2_SSH_KEY" ]; then
+            echo "ERROR: EC2_SSH_KEY is empty"
+            exit 1
+          fi
+
+          echo "EC2_HOST is configured"
+          echo "EC2_USER is configured"
+          echo "EC2_SSH_KEY is configured"
+
+          # Create SSH private key
+          printf '%s\n' "$EC2_SSH_KEY" > "$HOME/.ssh/ec2_key"
+          chmod 600 "$HOME/.ssh/ec2_key"
+
+          # Check SSH key
+          if ! ssh-keygen -y -f "$HOME/.ssh/ec2_key" > /dev/null 2>&1; then
+            echo "ERROR: EC2_SSH_KEY is not a valid private key"
+            exit 1
+          fi
+
+          echo "SSH private key is valid"
+
+          echo "Testing EC2 host..."
+
+          # Add EC2 host to known_hosts
           echo "Adding EC2 host to known_hosts..."
 
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$EC2_HOST" >> "$HOME/.ssh/known_hosts"
+
+          chmod 644 "$HOME/.ssh/known_hosts"
 
           echo "Connecting to EC2..."
 
-          ssh -i ~/.ssh/ec2_key \
+          ssh \
+            -i "$HOME/.ssh/ec2_key" \
             -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=30 \
             "$EC2_USER@$EC2_HOST" \
             "echo 'SSH connection successful'"
+
+          echo "EC2 SSH connection successful"
 
       # ------------------------------------------------
       # 11. SUCCESS EMAIL
